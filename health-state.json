@@ -1,0 +1,12 @@
+{
+  "startedAt": 1769597166775,
+  "checks": 1,
+  "restarts": {},
+  "lastCheck": 1769597166782,
+  "status": {
+    "scanner-daemon": "healthy",
+    "realtime-monitor": "healthy",
+    "alert-tracker": "healthy",
+    "wallet-discovery": "healthy"
+  }
+}

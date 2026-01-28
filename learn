@@ -1,0 +1,377 @@
+#!/usr/bin/env node
+
+/**
+ * MUTT Learning Log
+ * 
+ * A feedback loop for continuous improvement.
+ * Tracks what worked, what failed, and lessons learned.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const STORE_DIR = path.join(process.env.HOME, '.mutt', 'learnings');
+const INDEX_FILE = path.join(STORE_DIR, 'index.json');
+
+// Ensure storage directory exists
+function ensureStore() {
+  if (!fs.existsSync(STORE_DIR)) {
+    fs.mkdirSync(STORE_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(INDEX_FILE)) {
+    fs.writeFileSync(INDEX_FILE, JSON.stringify({ learnings: [], stats: { total: 0, byCategory: {} } }, null, 2));
+  }
+}
+
+// Load index
+function loadIndex() {
+  ensureStore();
+  return JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
+}
+
+// Save index
+function saveIndex(index) {
+  fs.writeFileSync(INDEX_FILE, JSON.stringify(index, null, 2));
+}
+
+// Generate short ID
+function genId() {
+  return crypto.randomBytes(4).toString('hex');
+}
+
+// Format date
+function formatDate(ts) {
+  return new Date(ts).toISOString().split('T')[0];
+}
+
+// Format time ago
+function timeAgo(ts) {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  
+  if (days > 0) return `${days}d ago`;
+  if (hours > 0) return `${hours}h ago`;
+  if (mins > 0) return `${mins}m ago`;
+  return 'just now';
+}
+
+// Category emoji
+const CATEGORY_EMOJI = {
+  success: '✅',
+  failure: '❌',
+  insight: '💡',
+  tip: '💡'
+};
+
+// Add a learning
+function add(category, content, tags = []) {
+  const index = loadIndex();
+  
+  const learning = {
+    id: genId(),
+    category,
+    content,
+    tags,
+    timestamp: Date.now(),
+    date: formatDate(Date.now())
+  };
+  
+  index.learnings.unshift(learning);
+  index.stats.total++;
+  index.stats.byCategory[category] = (index.stats.byCategory[category] || 0) + 1;
+  
+  saveIndex(index);
+  
+  console.log(`${CATEGORY_EMOJI[category]} Added ${category}: "${content.slice(0, 50)}${content.length > 50 ? '...' : ''}"`);
+  console.log(`   ID: ${learning.id} | Tags: ${tags.length ? tags.join(', ') : 'none'}`);
+}
+
+// List learnings
+function list(options = {}) {
+  const index = loadIndex();
+  let learnings = index.learnings;
+  
+  // Filter by category
+  if (options.category) {
+    learnings = learnings.filter(l => l.category === options.category);
+  }
+  
+  // Filter by tag
+  if (options.tag) {
+    learnings = learnings.filter(l => l.tags && l.tags.includes(options.tag));
+  }
+  
+  // Filter by days
+  if (options.days) {
+    const cutoff = Date.now() - (options.days * 86400000);
+    learnings = learnings.filter(l => l.timestamp >= cutoff);
+  }
+  
+  // Limit
+  const limit = options.limit || 20;
+  learnings = learnings.slice(0, limit);
+  
+  if (learnings.length === 0) {
+    console.log('No learnings found.');
+    return;
+  }
+  
+  console.log(`\n📚 Learnings (${learnings.length}/${index.stats.total})\n`);
+  
+  for (const l of learnings) {
+    const emoji = CATEGORY_EMOJI[l.category] || '📝';
+    const tags = l.tags?.length ? ` [${l.tags.join(', ')}]` : '';
+    console.log(`${emoji} [${l.id}] ${l.content}`);
+    console.log(`   ${l.category} | ${timeAgo(l.timestamp)}${tags}\n`);
+  }
+}
+
+// Search learnings
+function search(query, options = {}) {
+  const index = loadIndex();
+  const queryLower = query.toLowerCase();
+  
+  let results = index.learnings.filter(l => 
+    l.content.toLowerCase().includes(queryLower) ||
+    l.tags?.some(t => t.toLowerCase().includes(queryLower))
+  );
+  
+  // Filter by tag if specified
+  if (options.tag) {
+    results = results.filter(l => l.tags && l.tags.includes(options.tag));
+  }
+  
+  const limit = options.limit || 10;
+  results = results.slice(0, limit);
+  
+  if (results.length === 0) {
+    console.log(`No learnings found for "${query}"`);
+    return;
+  }
+  
+  console.log(`\n🔍 Search: "${query}" (${results.length} results)\n`);
+  
+  for (const l of results) {
+    const emoji = CATEGORY_EMOJI[l.category] || '📝';
+    const tags = l.tags?.length ? ` [${l.tags.join(', ')}]` : '';
+    console.log(`${emoji} [${l.id}] ${l.content}`);
+    console.log(`   ${l.category} | ${timeAgo(l.timestamp)}${tags}\n`);
+  }
+}
+
+// Show summary
+function summary(options = {}) {
+  const index = loadIndex();
+  let learnings = index.learnings;
+  
+  // Filter by days
+  if (options.days) {
+    const cutoff = Date.now() - (options.days * 86400000);
+    learnings = learnings.filter(l => l.timestamp >= cutoff);
+  }
+  
+  const byCategory = {};
+  const tagCounts = {};
+  
+  for (const l of learnings) {
+    byCategory[l.category] = (byCategory[l.category] || 0) + 1;
+    if (l.tags) {
+      for (const tag of l.tags) {
+        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+      }
+    }
+  }
+  
+  const period = options.days ? `last ${options.days} days` : 'all time';
+  
+  console.log(`\n📊 Learning Summary (${period})\n`);
+  console.log(`Total learnings: ${learnings.length}`);
+  console.log();
+  console.log('By category:');
+  for (const [cat, count] of Object.entries(byCategory).sort((a, b) => b[1] - a[1])) {
+    const emoji = CATEGORY_EMOJI[cat] || '📝';
+    const bar = '█'.repeat(Math.min(count, 20));
+    console.log(`  ${emoji} ${cat.padEnd(10)} ${bar} ${count}`);
+  }
+  
+  if (Object.keys(tagCounts).length > 0) {
+    console.log();
+    console.log('Top tags:');
+    const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    for (const [tag, count] of topTags) {
+      console.log(`  #${tag}: ${count}`);
+    }
+  }
+  
+  // Recent failures are high priority
+  const recentFailures = learnings.filter(l => l.category === 'failure').slice(0, 3);
+  if (recentFailures.length > 0) {
+    console.log();
+    console.log('⚠️  Recent failures to avoid:');
+    for (const f of recentFailures) {
+      console.log(`  • ${f.content.slice(0, 60)}${f.content.length > 60 ? '...' : ''}`);
+    }
+  }
+  
+  // Recent successes to replicate
+  const recentSuccesses = learnings.filter(l => l.category === 'success').slice(0, 3);
+  if (recentSuccesses.length > 0) {
+    console.log();
+    console.log('✅ Recent successes to replicate:');
+    for (const s of recentSuccesses) {
+      console.log(`  • ${s.content.slice(0, 60)}${s.content.length > 60 ? '...' : ''}`);
+    }
+  }
+}
+
+// Delete a learning
+function remove(id) {
+  const index = loadIndex();
+  const idx = index.learnings.findIndex(l => l.id === id);
+  
+  if (idx === -1) {
+    console.log(`Learning ${id} not found`);
+    return;
+  }
+  
+  const removed = index.learnings.splice(idx, 1)[0];
+  index.stats.total--;
+  index.stats.byCategory[removed.category]--;
+  
+  saveIndex(index);
+  console.log(`🗑️  Removed: "${removed.content.slice(0, 50)}..."`);
+}
+
+// Export for use by agent
+function getRecentLearnings(category = null, limit = 5) {
+  const index = loadIndex();
+  let learnings = index.learnings;
+  
+  if (category) {
+    learnings = learnings.filter(l => l.category === category);
+  }
+  
+  return learnings.slice(0, limit);
+}
+
+// CLI
+const args = process.argv.slice(2);
+const command = args[0];
+
+function parseArgs(args) {
+  const result = { _: [] };
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      const key = args[i].slice(2);
+      const next = args[i + 1];
+      if (next && !next.startsWith('--')) {
+        result[key] = next;
+        i++;
+      } else {
+        result[key] = true;
+      }
+    } else {
+      result._.push(args[i]);
+    }
+  }
+  return result;
+}
+
+const opts = parseArgs(args.slice(1));
+
+switch (command) {
+  case 'add': {
+    const category = opts._[0];
+    const content = opts._[1];
+    const tags = opts.tags ? opts.tags.split(',').map(t => t.trim()) : [];
+    
+    if (!category || !content) {
+      console.log('Usage: learn add <category> "<content>" [--tags tag1,tag2]');
+      console.log('Categories: success, failure, insight, tip');
+      process.exit(1);
+    }
+    
+    if (!['success', 'failure', 'insight', 'tip'].includes(category)) {
+      console.log('Invalid category. Use: success, failure, insight, tip');
+      process.exit(1);
+    }
+    
+    add(category, content, tags);
+    break;
+  }
+  
+  case 'list':
+    list({
+      category: opts.category,
+      tag: opts.tag,
+      days: opts.days ? parseInt(opts.days) : null,
+      limit: opts.limit ? parseInt(opts.limit) : 20
+    });
+    break;
+  
+  case 'search': {
+    const query = opts._[0];
+    if (!query) {
+      console.log('Usage: learn search "<query>" [--tag tag] [--limit N]');
+      process.exit(1);
+    }
+    search(query, {
+      tag: opts.tag,
+      limit: opts.limit ? parseInt(opts.limit) : 10
+    });
+    break;
+  }
+  
+  case 'summary':
+    summary({
+      days: opts.days ? parseInt(opts.days) : null
+    });
+    break;
+  
+  case 'remove':
+  case 'delete': {
+    const id = opts._[0];
+    if (!id) {
+      console.log('Usage: learn remove <id>');
+      process.exit(1);
+    }
+    remove(id);
+    break;
+  }
+  
+  case 'export':
+    console.log(JSON.stringify(loadIndex(), null, 2));
+    break;
+  
+  default:
+    console.log(`
+📚 MUTT Learning Log
+
+Usage:
+  learn add <category> "<content>" [--tags tag1,tag2]
+  learn list [--category X] [--tag X] [--days N] [--limit N]
+  learn search "<query>" [--tag X] [--limit N]
+  learn summary [--days N]
+  learn remove <id>
+  learn export
+
+Categories:
+  success  - What worked well
+  failure  - What broke
+  insight  - Observations
+  tip      - Quick tricks
+
+Examples:
+  learn add success "Batching API calls reduced latency"
+  learn add failure "Regex broke on nested HTML" --tags parsing,html
+  learn search "API"
+  learn list --category failure --limit 5
+  learn summary --days 7
+`);
+}
+
+// Export for programmatic use
+module.exports = { add, list, search, summary, remove, getRecentLearnings, loadIndex };
